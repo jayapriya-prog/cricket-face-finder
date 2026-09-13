@@ -14,7 +14,86 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      player_faces: {
+        Row: {
+          created_at: string
+          descriptor: number[]
+          detection_score: number | null
+          id: string
+          license: string | null
+          player_id: string
+          source_url: string | null
+        }
+        Insert: {
+          created_at?: string
+          descriptor: number[]
+          detection_score?: number | null
+          id?: string
+          license?: string | null
+          player_id: string
+          source_url?: string | null
+        }
+        Update: {
+          created_at?: string
+          descriptor?: number[]
+          detection_score?: number | null
+          id?: string
+          license?: string | null
+          player_id?: string
+          source_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "player_faces_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      players: {
+        Row: {
+          created_at: string
+          era: string | null
+          id: string
+          name: string
+          photo_credit: string | null
+          photo_url: string | null
+          role: string | null
+          short_name: string | null
+          slug: string
+          updated_at: string
+          years: string | null
+        }
+        Insert: {
+          created_at?: string
+          era?: string | null
+          id?: string
+          name: string
+          photo_credit?: string | null
+          photo_url?: string | null
+          role?: string | null
+          short_name?: string | null
+          slug: string
+          updated_at?: string
+          years?: string | null
+        }
+        Update: {
+          created_at?: string
+          era?: string | null
+          id?: string
+          name?: string
+          photo_credit?: string | null
+          photo_url?: string | null
+          role?: string | null
+          short_name?: string | null
+          slug?: string
+          updated_at?: string
+          years?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
