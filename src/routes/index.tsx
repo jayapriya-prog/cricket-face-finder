@@ -1,24 +1,290 @@
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { AnimatePresence, motion } from "framer-motion";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { ActionButton } from "@/components/ActionButton";
+import { Dropzone } from "@/components/Dropzone";
+import { FacePreview } from "@/components/FacePreview";
+import { Logo } from "@/components/Logo";
+import { ProcessingPanel } from "@/components/ProcessingPanel";
+import { ResultsPanel } from "@/components/ResultsPanel";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import {
+  detectFaces,
+  loadFaceEngine,
+  loadImageFromUrl,
+  readImage,
+  type DetectedFace,
+} from "@/lib/faceEngine";
+import { rankPlayers, type MatchCandidate } from "@/lib/matching";
+import { playersQueryOptions } from "@/lib/playersDb";
 
-// No head() here: the home route inherits title/description/og/twitter from
-// __root.tsx, and ships no og:image so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
-  component: Index,
+  head: () => ({
+    meta: [
+      { title: "Who's That Cricketer? Indian Cricket Player Face Recognition" },
+      {
+        name: "description",
+        content:
+          "Upload a photo and identify Indian cricket players in seconds, with a confidence score. Runs entirely in your browser.",
+      },
+      { property: "og:title", content: "Who's That Cricketer? Face Recognition for Indian Cricket" },
+      {
+        property: "og:description",
+        content:
+          "Upload a photo and identify Indian cricket players in seconds, with a confidence score.",
+      },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
+  }),
+  component: Home,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
-function Index() {
+type Screen = "upload" | "preview" | "processing" | "results";
+
+const fade = {
+  initial: { opacity: 0, y: 16 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -16 },
+  transition: { duration: 0.3, ease: "easeOut" as const },
+};
+
+function Home() {
+  const [screen, setScreen] = useState<Screen>("upload");
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  const [faces, setFaces] = useState<DetectedFace[]>([]);
+  const [selectedFace, setSelectedFace] = useState(0);
+  const [step, setStep] = useState(0);
+  const [candidates, setCandidates] = useState<MatchCandidate[]>([]);
+  const [scanning, setScanning] = useState(false);
+  const objectUrlRef = useRef<string | null>(null);
+
+  const { data: players, isLoading: playersLoading, error: playersError } = useQuery(
+    playersQueryOptions,
+  );
+
+  useEffect(() => {
+    loadFaceEngine().catch(() => {
+      toast.error("The recognition model could not be loaded. Please refresh the page.");
+    });
+  }, []);
+
+  useEffect(() => {
+    if (playersError) toast.error("We couldn't load the player database. Check your connection.");
+  }, [playersError]);
+
+  const analyseImage = useCallback(async (image: HTMLImageElement, url: string) => {
+    setImageUrl(url);
+    setNaturalSize({ width: image.naturalWidth, height: image.naturalHeight });
+    setScreen("preview");
+    setScanning(true);
+    try {
+      const detected = await detectFaces(image);
+      setFaces(detected);
+      setSelectedFace(0);
+      if (detected.length === 0) {
+        toast.error("No face found in that photo. Try a clearer, front-facing picture.");
+      }
+    } catch {
+      toast.error("That image couldn't be analysed. Please try a different one.");
+    } finally {
+      setTimeout(() => setScanning(false), 1200);
+    }
+  }, []);
+
+  const handleFile = useCallback(
+    async (file: File) => {
+      try {
+        const { url, image } = await readImage(file);
+        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = url;
+        await analyseImage(image, url);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "That image could not be opened.");
+      }
+    },
+    [analyseImage],
+  );
+
+  const handleSample = useCallback(
+    async (url: string) => {
+      try {
+        const image = await loadImageFromUrl(url);
+        await analyseImage(image, url);
+      } catch {
+        toast.error("That sample photo could not be loaded.");
+      }
+    },
+    [analyseImage],
+  );
+
+  const runMatch = useCallback(async () => {
+    const face = faces[selectedFace];
+    if (!face) {
+      toast.error("Pick a face to analyse first.");
+      return;
+    }
+    if (!players || players.length === 0) {
+      toast.error("The player database isn't ready yet. Please try again in a moment.");
+      return;
+    }
+    setScreen("processing");
+    setStep(0);
+    const timers = [
+      setTimeout(() => setStep(1), 500),
+      setTimeout(() => setStep(2), 1100),
+      setTimeout(() => setStep(3), 2600),
+    ];
+    const started = Date.now();
+    const ranked = rankPlayers(face.descriptor, players);
+    const wait = Math.max(0, 1500 - (Date.now() - started));
+    setTimeout(() => {
+      timers.forEach(clearTimeout);
+      setCandidates(ranked);
+      setScreen("results");
+    }, wait);
+  }, [faces, players, selectedFace]);
+
+  const reset = useCallback(() => {
+    setScreen("upload");
+    setFaces([]);
+    setCandidates([]);
+    setNaturalSize(null);
+    setImageUrl(null);
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+  }, []);
+
+  const samples = (players ?? []).filter((p) => p.photoUrl).slice(0, 5);
+
   return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
-    </div>
+    <>
+      <div className="stadium-bg" aria-hidden="true" />
+      <div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col px-4 py-6 sm:px-6">
+        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <Logo className="shrink-0" />
+            <div className="min-w-0">
+              <p className="font-display truncate text-sm font-bold sm:text-base">
+                Indian Cricket Player
+              </p>
+              <p className="truncate text-xs tracking-[0.18em] text-muted-foreground uppercase">
+                Face Recognition System
+              </p>
+            </div>
+          </div>
+          <ThemeToggle />
+        </header>
+
+        <main className="flex flex-1 flex-col justify-center py-10">
+          <AnimatePresence mode="wait">
+            {screen === "upload" && (
+              <motion.section key="upload" {...fade} className="space-y-8">
+                <div className="text-center">
+                  <h1 className="font-display text-4xl font-bold sm:text-5xl">
+                    Who's That <span className="gradient-text">Cricketer?</span>
+                  </h1>
+                  <p className="mx-auto mt-3 max-w-lg text-sm text-muted-foreground sm:text-base">
+                    Drop in a photo and we'll name the Indian cricketer, with a confidence score —
+                    all analysed privately on your device.
+                  </p>
+                </div>
+                <Dropzone onFile={handleFile} onError={(m) => toast.error(m)} />
+                <div>
+                  <p className="mb-3 text-center text-xs tracking-[0.18em] text-muted-foreground uppercase">
+                    No photo handy? Try one of these
+                  </p>
+                  <div className="flex flex-wrap justify-center gap-3">
+                    {playersLoading &&
+                      Array.from({ length: 5 }).map((_, i) => (
+                        <div key={i} className="shimmer size-16 rounded-2xl" />
+                      ))}
+                    {samples.map((player) => (
+                      <button
+                        key={player.id}
+                        type="button"
+                        onClick={() => handleSample(player.photoUrl!)}
+                        className="size-16 overflow-hidden rounded-2xl border border-border transition-transform hover:scale-105"
+                        aria-label={`Try the sample photo of ${player.name}`}
+                      >
+                        <img
+                          src={player.photoUrl!}
+                          alt={player.name}
+                          loading="lazy"
+                          className="size-full object-cover"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </motion.section>
+            )}
+
+            {screen === "preview" && imageUrl && (
+              <motion.section key="preview" {...fade} className="space-y-5">
+                <FacePreview
+                  imageUrl={imageUrl}
+                  naturalSize={naturalSize}
+                  faces={faces}
+                  selectedIndex={selectedFace}
+                  onSelect={setSelectedFace}
+                  scanning={scanning}
+                />
+                <p className="text-center text-sm text-muted-foreground" aria-live="polite">
+                  {faces.length === 0
+                    ? "No face detected — try another photo."
+                    : faces.length === 1
+                      ? "Face detected and ready to analyse."
+                      : `${faces.length} faces detected — tap the one you want identified.`}
+                </p>
+                <div className="flex flex-col-reverse items-center justify-center gap-3 sm:flex-row">
+                  <ActionButton variant="ghost" onClick={reset}>
+                    Choose a different image
+                  </ActionButton>
+                  <ActionButton
+                    variant="accent"
+                    size="lg"
+                    onClick={runMatch}
+                    disabled={faces.length === 0}
+                  >
+                    Analyse photo
+                  </ActionButton>
+                </div>
+              </motion.section>
+            )}
+
+            {screen === "processing" && (
+              <motion.section key="processing" {...fade} className="space-y-5">
+                {imageUrl && (
+                  <FacePreview
+                    imageUrl={imageUrl}
+                    naturalSize={naturalSize}
+                    faces={faces.slice(selectedFace, selectedFace + 1)}
+                    selectedIndex={0}
+                    scanning
+                  />
+                )}
+                <ProcessingPanel step={step} />
+              </motion.section>
+            )}
+
+            {screen === "results" && imageUrl && (
+              <motion.section key="results" {...fade} aria-live="polite">
+                <ResultsPanel imageUrl={imageUrl} candidates={candidates} onReset={reset} />
+              </motion.section>
+            )}
+          </AnimatePresence>
+        </main>
+
+        <footer className="pb-4 text-center text-xs text-muted-foreground">
+          Reference photos from Wikimedia Commons, used under their respective free licences.
+        </footer>
+      </div>
+    </>
   );
 }
